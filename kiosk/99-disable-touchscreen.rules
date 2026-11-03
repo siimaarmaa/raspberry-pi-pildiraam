@@ -1,2 +1,0 @@
-# Keela ainult puutetundlikkus libinput/Weston jaoks.
-ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event[0-9]*", ENV{ID_INPUT_TOUCHSCREEN}=="1", ENV{LIBINPUT_IGNORE_DEVICE}="1"
