@@ -211,21 +211,6 @@ pgrep -a cog
 tail -n 50 ~/weston.log
 ```
 
-## GitHubi panek
-
-Tee GitHubis uus tühi repo ja lae need kolm faili sinna üles. Võid teha ka terminalist:
-
-```bash
-git init
-git add README.md index.php upload.php
-git commit -m 'Lisa pildiraam'
-git branch -M main
-git remote add origin https://github.com/SINU_KASUTAJA/raspberry-pi-pildiraam.git
-git push -u origin main
-```
-
-Asenda `SINU_KASUTAJA` oma GitHubi kasutajanimega.
-
 ## Veel üks asi
 
 **Üleslaadimise lehel ei ole parooli.** See on meelega nii, sest kasutan seda oma koduvõrgus. Aga igaüks, kes sellele lehele võrgust ligi saab, saab ka fotosid lisada. Seega ära suuna ruuterist porti 80 internetti ja ära pane seda avalikku serverisse niisama üles.
