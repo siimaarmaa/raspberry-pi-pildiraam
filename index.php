@@ -32,14 +32,23 @@ function photoList(string $dir, array $extensions): array
     return $photos;
 }
 
-// ?list=1 tagastab brauserile fotode nimekirja.
+// Nimekirja päring. Anname veateate ka siis, kui Apache ei pääse kaustale ligi.
 if (isset($_GET['list'])) {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
 
+    $error = null;
+
+    if (!is_dir($photoDir)) {
+        $error = 'Pildikausta ei leitud või puudub sellele ligipääs: ' . $photoDir;
+    } elseif (!is_readable($photoDir)) {
+        $error = 'Veebiserver ei saa pildikausta lugeda: ' . $photoDir;
+    }
+
     echo json_encode([
         'version' => hash_file('sha256', __FILE__),
-        'photos' => photoList($photoDir, $extensions),
+        'photos' => $error ? [] : photoList($photoDir, $extensions),
+        'error' => $error,
     ], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
 
     exit;
@@ -69,14 +78,23 @@ if (isset($_GET['photo'])) {
         exit;
     }
 
-    if (!extension_loaded('gd')) {
-        http_response_code(500);
-        exit('PHP GD moodul puudub.');
-    }
+    // Kui GD või vahemälu pole saadaval, näitame originaalfaili.
+    // Nii ei jää kogu slaidiesitlus ühe puuduva PHP mooduli taha kinni.
+    if (!extension_loaded('gd') || !is_dir($cacheDir) || !is_writable($cacheDir)) {
+        $details = @getimagesize($path);
+        $mime = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
+            'png' => 'image/png', 'webp' => 'image/webp'][$ext];
 
-    if (!is_dir($cacheDir) || !is_writable($cacheDir)) {
-        http_response_code(500);
-        exit('Piltide vahemälu kaust ei ole kirjutatav.');
+        if (!$details || $details[0] * $details[1] > 20000000 || $details['mime'] !== $mime) {
+            http_response_code(415);
+            exit('Vigane või liiga suur foto.');
+        }
+
+        header('X-Content-Type-Options: nosniff');
+        header('Content-Type: ' . $mime);
+        header('Cache-Control: public, max-age=86400');
+        readfile($path);
+        exit;
     }
 
     $cache = $cacheDir . '/' . sha1($name . '|' . filemtime($path) . '|' . filesize($path)) . '.jpg';
@@ -351,7 +369,7 @@ header('Cache-Control: no-store');
 
     <div id="empty">
         <strong>Ootan pilte …</strong>
-        <small>Lisa fotod kausta /home/saarmaa/pildid</small>
+        <small id="empty-detail">Lisa fotod kausta <?= htmlspecialchars($photoDir, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></small>
     </div>
 
     <script>
@@ -360,6 +378,9 @@ header('Cache-Control: no-store');
         const layers = [...document.querySelectorAll('.photo')];
         const bar = document.querySelector('#bar');
         const empty = document.querySelector('#empty');
+        const emptyTitle = empty.querySelector('strong');
+        const emptyDetail = document.querySelector('#empty-detail');
+        const photoDirectory = <?= json_encode($photoDir, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE) ?>;
 
         let photos = [];
         let current = -1;
@@ -381,15 +402,11 @@ header('Cache-Control: no-store');
         clock();
         setInterval(clock, 15000);
 
-        // Kase tn 9, Alatskivi. Ilma jaoks kasutame piirkonna koordinaate.
-        const weatherUrl = new URL('https://api.open-meteo.com/v1/forecast');
-        weatherUrl.search = new URLSearchParams({
-            latitude: '58.59825',
-            longitude: '27.13214',
-            current: 'temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,is_day,wind_speed_10m',
-            timezone: 'Europe/Tallinn',
-            wind_speed_unit: 'ms'
-        }).toString();
+        // Kase tn 9 piirkonna ilm. Väline päring ei ole fotode kuvamiseks vajalik.
+        const weatherUrl = 'https://api.open-meteo.com/v1/forecast'
+            + '?latitude=58.59825&longitude=27.13214'
+            + '&current=temperature_2m,apparent_temperature,weather_code,is_day,wind_speed_10m'
+            + '&timezone=Europe%2FTallinn&wind_speed_unit=ms';
 
         function weatherCondition(code, isDay) {
             if (code === 0) return [isDay ? '☀️' : '🌙', 'Selge'];
@@ -408,7 +425,7 @@ header('Cache-Control: no-store');
 
         async function updateWeather() {
             try {
-                const response = await fetch(weatherUrl.toString(), { cache: 'no-store' });
+                const response = await fetch(weatherUrl, { cache: 'no-store' });
 
                 if (!response.ok) {
                     throw new Error('HTTP ' + response.status);
@@ -448,10 +465,14 @@ header('Cache-Control: no-store');
             }
         }
 
-        updateWeather();
-        setInterval(updateWeather, 15 * 60 * 1000);
+        function showEmpty(title, detail) {
+            emptyTitle.textContent = title;
+            emptyDetail.textContent = detail;
+            empty.hidden = false;
+        }
 
-        function show(index) {
+        // Proovime järgmise fotoga, kui üks fail ei avane.
+        function show(index, attempts = 0) {
             if (busy || !photos.length) {
                 return;
             }
@@ -475,7 +496,6 @@ header('Cache-Control: no-store');
                     .replace(/[_-]/g, ' ');
                 document.querySelector('#count').textContent = `${current + 1} / ${photos.length}`;
 
-                // Animatsioon algab iga uue foto puhul uuesti.
                 bar.classList.remove('run');
                 void bar.offsetWidth;
                 bar.classList.add('run');
@@ -483,10 +503,20 @@ header('Cache-Control: no-store');
 
             incoming.onerror = () => {
                 busy = false;
-                console.error('Pilti ei saanud avada:', item.name);
+                console.error('Foto laadimine ebaõnnestus:', item.name);
+
+                if (attempts + 1 < photos.length) {
+                    setTimeout(() => show(index + 1, attempts + 1), 0);
+                } else {
+                    showEmpty(
+                        'Fotod leiti, aga neid ei saa avada',
+                        'Kontrolli, kas Apache saab pilte lugeda ja failid on terved.'
+                    );
+                }
             };
 
-            incoming.src = '?photo=' + encodeURIComponent(item.name) + '&v=' + encodeURIComponent(item.rev);
+            incoming.src = '?photo=' + encodeURIComponent(item.name)
+                + '&v=' + encodeURIComponent(item.rev);
         }
 
         function next() {
@@ -501,39 +531,63 @@ header('Cache-Control: no-store');
                     throw new Error('HTTP ' + response.status);
                 }
 
-                const previous = photos[current];
                 const data = await response.json();
 
-                // Kui index.php muutub, laadib raam ise uue versiooni.
                 if (data.version !== pageVersion) {
                     location.replace('index.php?updated=' + Date.now());
                     return;
                 }
 
+                if (data.error) {
+                    showEmpty('Pildikausta ei saa avada', data.error);
+                    return;
+                }
+
+                if (!Array.isArray(data.photos)) {
+                    throw new Error('Vigane piltide nimekiri');
+                }
+
+                // Hoiame sama foto ekraanil, kui kausta sisu muutub.
+                const previous = photos[current];
                 photos = data.photos;
-                current = photos.findIndex(photo => photo.name === previous?.name);
-                const replaced = current !== -1 && previous && photos[current].rev !== previous.rev;
 
                 if (!photos.length) {
                     layers.forEach(image => image.classList.remove('visible'));
                     document.querySelector('#name').textContent = '';
                     document.querySelector('#count').textContent = '';
-                    empty.hidden = false;
                     current = -1;
-                } else if (current === -1 || replaced) {
-                    show(current === -1 ? 0 : current);
+                    showEmpty('Ootan pilte …', 'Lisa fotod kausta ' + photoDirectory);
+                    return;
+                }
+
+                const found = previous
+                    ? photos.findIndex(photo => photo.name === previous.name)
+                    : -1;
+                const replaced = found !== -1 && photos[found].rev !== previous.rev;
+                current = found;
+
+                if (found === -1 || replaced) {
+                    show(found === -1 ? 0 : found);
                 } else {
                     document.querySelector('#count').textContent = `${current + 1} / ${photos.length}`;
                 }
             } catch (error) {
                 console.error('Piltide nimekirja viga:', error);
+                if (current === -1) {
+                    showEmpty('Piltide nimekirja ei saa laadida',
+                        'Kontrolli aadressi ?list=1 ja Apache/PHP seadistust.');
+                }
             }
         }
 
+        // Fotod käivitame enne ilma päringut.
         reload();
         setInterval(next, delay);
-        setInterval(reload, 30000); // Kontrollime, kas pilte on juurde tulnud.
+        setInterval(reload, 30000);
         setInterval(() => location.reload(), 30 * 60 * 1000);
+
+        updateWeather();
+        setInterval(updateWeather, 15 * 60 * 1000);
     </script>
 </body>
 </html>
