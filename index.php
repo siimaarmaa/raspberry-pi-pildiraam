@@ -54,6 +54,16 @@ if (isset($_GET['list'])) {
     exit;
 }
 
+// Originaali näitame siis, kui pildi töötlemine Pi jaoks liiga kulukas on.
+function serveOriginalPhoto(string $path, string $mime): void
+{
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Type: ' . $mime);
+    header('Cache-Control: public, max-age=86400');
+    readfile($path);
+    exit;
+}
+
 // ?photo=fail.jpg annab väiksemaks tehtud JPEG-pildi.
 if (isset($_GET['photo'])) {
     $name = $_GET['photo'];
@@ -78,47 +88,46 @@ if (isset($_GET['photo'])) {
         exit;
     }
 
-    // Kui GD või vahemälu pole saadaval, näitame originaalfaili.
-    // Nii ei jää kogu slaidiesitlus ühe puuduva PHP mooduli taha kinni.
-    if (!extension_loaded('gd') || !is_dir($cacheDir) || !is_writable($cacheDir)) {
-        $details = @getimagesize($path);
-        $mime = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
-            'png' => 'image/png', 'webp' => 'image/webp'][$ext];
+    // Mõõtmed ja failitüüp kontrollime enne pildi töötlemist.
+    $details = @getimagesize($path);
+    $mime = is_array($details) ? ($details['mime'] ?? '') : '';
 
-        if (!$details || $details[0] * $details[1] > 20000000 || $details['mime'] !== $mime) {
-            http_response_code(415);
-            exit('Vigane või liiga suur foto.');
-        }
+    if (
+        !$details || $details[0] < 1 || $details[1] < 1 ||
+        !in_array($mime, ['image/jpeg', 'image/png', 'image/webp'], true)
+    ) {
+        http_response_code(415);
+        exit('Fail ei ole toetatud või on vigane pilt.');
+    }
 
-        header('X-Content-Type-Options: nosniff');
-        header('Content-Type: ' . $mime);
-        header('Cache-Control: public, max-age=86400');
-        readfile($path);
-        exit;
+    [$width, $height] = $details;
+
+    // Suurt fotot ei töötle GD-ga: Pi võib muidu mälust tühjaks saada.
+    // Sama varuvariant aitab puuduva GD või kirjutuskaitstud vahemälu korral.
+    if (
+        $width * $height > 20000000 ||
+        !extension_loaded('gd') ||
+        !is_dir($cacheDir) ||
+        !is_writable($cacheDir)
+    ) {
+        serveOriginalPhoto($path, $mime);
     }
 
     $cache = $cacheDir . '/' . sha1($name . '|' . filemtime($path) . '|' . filesize($path)) . '.jpg';
 
-    if (!is_file($cache)) {
-        $dimensions = @getimagesize($path);
-
-        if (!$dimensions || $dimensions[0] * $dimensions[1] > 20000000) {
-            http_response_code(415);
-            exit('Vigane või liiga suur foto (üle 20 MP).');
-        }
-
-        [$width, $height] = $dimensions;
-        $reader = match ($ext) {
-            'jpg', 'jpeg' => 'imagecreatefromjpeg',
-            'png' => 'imagecreatefrompng',
-            'webp' => 'imagecreatefromwebp',
+    if (!is_file($cache) || filesize($cache) === 0) {
+        // Kasutame faili tegelikku vormingut, mitte ainult nime laiendit.
+        $reader = match ($mime) {
+            'image/jpeg' => 'imagecreatefromjpeg',
+            'image/png' => 'imagecreatefrompng',
+            'image/webp' => 'imagecreatefromwebp',
         };
 
         $source = function_exists($reader) ? @$reader($path) : false;
 
         if (!$source) {
-            http_response_code(415);
-            exit;
+            // Kõiki JPEG- ja WebP-variante ei pruugi paigaldatud GD toetada.
+            serveOriginalPhoto($path, $mime);
         }
 
         // Raami jaoks pole mõtet originaali täissuuruses laadida.
@@ -166,8 +175,7 @@ if (isset($_GET['photo'])) {
                 @unlink($temp);
             }
 
-            http_response_code(500);
-            exit('Pildi vahemällu salvestamine ebaõnnestus.');
+            serveOriginalPhoto($path, $mime);
         }
 
         imagedestroy($image);
@@ -221,7 +229,7 @@ header('Cache-Control: no-store');
             background: linear-gradient(180deg, rgba(0, 0, 0, .28), transparent 22%, transparent 73%, rgba(0, 0, 0, .5));
         }
 
-        /* Kell ja kuupäev vasakul. Kuupäeva taust jääb alati mustaks. */
+        /* Kell ja kuupäev vasakus ülanurgas. */
         .top {
             position: fixed;
             top: 26px;
@@ -231,10 +239,15 @@ header('Cache-Control: no-store');
         }
 
         #time {
+            display: table;
+            padding: 8px 12px;
+            border-radius: 7px;
+            background: #000;
             font-size: 38px;
             font-weight: 300;
             letter-spacing: .025em;
             line-height: 1.1;
+            text-shadow: none;
         }
 
         #date {
@@ -244,7 +257,7 @@ header('Cache-Control: no-store');
             border-radius: 5px;
             background: #000;
             color: #fff;
-            font-size: 13px;
+            font-size: 17px;
             text-transform: capitalize;
             text-shadow: none;
         }
@@ -264,12 +277,12 @@ header('Cache-Control: no-store');
             font-variant-numeric: tabular-nums;
         }
 
-        .weather-place { font-size: 13px; font-weight: 600; opacity: .9; }
+        .weather-place { font-size: 16px; font-weight: 600; opacity: .9; }
         .weather-main { display: flex; justify-content: flex-end; align-items: center; gap: 9px; margin-top: 2px; }
-        #weather-icon { font-size: 28px; line-height: 1.2; }
-        #weather-temp { font-size: 32px; font-weight: 300; line-height: 1.2; }
-        #weather-desc { font-size: 13px; }
-        #weather-details { margin-top: 3px; font-size: 11px; opacity: .78; }
+        #weather-icon { font-size: 32px; line-height: 1.2; }
+        #weather-temp { font-size: 36px; font-weight: 300; line-height: 1.2; }
+        #weather-desc { font-size: 16px; }
+        #weather-details { margin-top: 3px; font-size: 14px; opacity: .78; }
 
         .bottom {
             position: fixed;
@@ -277,14 +290,12 @@ header('Cache-Control: no-store');
             left: 26px;
             right: 26px;
             display: flex;
-            justify-content: space-between;
+            justify-content: flex-end;
             align-items: baseline;
-            gap: 16px;
             font-size: 13px;
             text-shadow: 0 2px 9px #000a;
         }
 
-        #name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .88; }
         #count { white-space: nowrap; opacity: .75; font-variant-numeric: tabular-nums; }
 
         .progress {
@@ -321,8 +332,8 @@ header('Cache-Control: no-store');
 
         @media (max-width: 520px) {
             .top { top: 14px; left: 14px; }
-            #time { font-size: 30px; }
-            #date { font-size: 11px; padding: 5px 7px; }
+            #time { font-size: 30px; padding: 7px 10px; }
+            #date { font-size: 14px; padding: 6px 8px; }
 
             .weather {
                 top: 14px;
@@ -332,10 +343,10 @@ header('Cache-Control: no-store');
                 padding: 8px 10px;
             }
 
-            .weather-place, #weather-desc { font-size: 12px; }
-            #weather-icon { font-size: 22px; }
-            #weather-temp { font-size: 25px; }
-            #weather-details { font-size: 10px; }
+            .weather-place, #weather-desc { font-size: 14px; }
+            #weather-icon { font-size: 25px; }
+            #weather-temp { font-size: 29px; }
+            #weather-details { font-size: 12px; }
         }
     </style>
 </head>
@@ -361,7 +372,6 @@ header('Cache-Control: no-store');
     </div>
 
     <div class="bottom">
-        <span id="name"></span>
         <span id="count"></span>
     </div>
 
@@ -491,9 +501,6 @@ header('Cache-Control: no-store');
                 busy = false;
                 empty.hidden = true;
 
-                document.querySelector('#name').textContent = item.name
-                    .replace(/\.[^.]+$/, '')
-                    .replace(/[_-]/g, ' ');
                 document.querySelector('#count').textContent = `${current + 1} / ${photos.length}`;
 
                 bar.classList.remove('run');
@@ -553,7 +560,6 @@ header('Cache-Control: no-store');
 
                 if (!photos.length) {
                     layers.forEach(image => image.classList.remove('visible'));
-                    document.querySelector('#name').textContent = '';
                     document.querySelector('#count').textContent = '';
                     current = -1;
                     showEmpty('Ootan pilte …', 'Lisa fotod kausta ' + photoDirectory);
