@@ -32,7 +32,8 @@ pildiraam/
 ├── common.php    # seadistus ja ühised abifunktsioonid
 ├── index.php     # slaidiesitlus ja piltide töötlemine
 ├── upload.php    # fotode lisamine, pööramine ja kustutamine
-└── README.md     # seesama juhend
+├── README.md     # seesama juhend
+└── WESTON-COG.md # Weston ja Cog: Pi ekraanile täisekraanil
 ```
 
 CSS ja JavaScript on PHP failide sees. Rohkem faile projektil vaja pole.
@@ -139,34 +140,9 @@ Ava telefonis haldusleht, vali fotod ja lase neil ära laadida. Võid valida suu
 
 ## Pi ekraanil automaatselt käima
 
-Kui sul Weston ja Cog juba töötavad, siis neid pole vaja uuesti installida. Muuda ainult Cogi veebiaadress:
+Kui tahad, et pildiraam käivituks Pi enda ekraanil täisekraanil iga alglaadimisega, vaata juhendit [WESTON-COG.md](WESTON-COG.md). Seal on Westoni ja Cogi paigaldus, seadistus, kioskiskript ja tõrkeotsing.
 
-```
-echo 'http://127.0.0.1/pildiraam/' > ~/.config/kiosk-url
-sudo reboot
-```
-
-Minu Touch Display 2 jaoks on `~/.config/weston.ini` selline:
-
-```
-[core]
-backend=drm
-shell=kiosk-shell.so
-idle-time=0
-require-input=false
-
-[output]
-name=DSI-1
-transform=normal
-
-[autolaunch]
-path=/usr/local/bin/kiosk-browser
-watch=false
-```
-
-See eeldab, et `/usr/local/bin/kiosk-browser` on sul juba loodud ning loeb aadressi failist `~/.config/kiosk-url`. Kui sul on teistpidi paigaldatud ekraan, tuleb `transform` väärtust muuta. Touch Display 2 paneel on ise juba 720 × 1280 ehk püstine.
-
-Kui esimest korda tööle saad, siis uusi pilte lisades enam Pi-d rebootima ei pea. Ka PHP failide muudatusi märkab brauser ligikaudu 30 sekundi jooksul. Lisaks värskendatakse leht igaks juhuks iga kuue tunni järel.
+Kui kiosk töötab, siis uusi pilte lisades enam Pi-d rebootima ei pea. Ka PHP failide muudatusi märkab brauser ligikaudu 30 sekundi jooksul. Lisaks värskendatakse leht igaks juhuks iga kuue tunni järel.
 
 ## Kui tahad midagi muuta
 
@@ -207,13 +183,7 @@ sudo -u www-data test -w /home/saarmaa/pildid && echo OK
 
 **Ilma kohal on ruudud.** Uues versioonis kasutab ilm SVG-ikoone, nii et ruute enam ei tohiks tulla. Kui näed neid ikka, on vana `index.php` veel ekraanil: kopeeri failid uuesti ja oota 30 sekundit.
 
-**Weston või Cog ei käivitu.** Siis on probleem tõenäoliselt kioskis, mitte PHP-s:
-
-```
-pgrep -a weston
-pgrep -a cog
-tail -n 50 ~/weston.log
-```
+**Weston või Cog ei käivitu.** Siis on probleem tõenäoliselt kioskis, mitte PHP-s. Vaata [WESTON-COG.md](WESTON-COG.md) tõrkeotsingu jaotist.
 
 ## Turvalisus
 
