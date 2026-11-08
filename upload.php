@@ -1,10 +1,14 @@
 <?php
+
 declare(strict_types=1);
 
-// Pildid on veebikaustast väljas. Vahemälu asukoht peab kattuma index.php-ga.
-$photoDir = getenv('PILDIRAAM_PILDID') ?: '/home/saarmaa/pildid';
-$cacheDir = getenv('PILDIRAAM_CACHE') ?: '/var/cache/pildiraam';
-$extensions = ['jpg', 'jpeg', 'png', 'webp'];
+require __DIR__ . '/common.php';
+
+// Seadistus asub failis common.php. Pildid on veebikaustast väljas.
+$config = pildiraamConfig();
+$photoDir = $config['photoDir'];
+$cacheDir = $config['cacheDir'];
+$extensions = $config['extensions'];
 
 // Kaitseb vormipäringuid, kui mõni muu veebileht üritab brauserit ära kasutada.
 // Ligipääsu see ei piira: leht ise on endiselt ilma paroolita.
@@ -16,9 +20,11 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
     ]);
     session_start();
 }
+
 if (empty($_SESSION['pildiraam_token'])) {
     $_SESSION['pildiraam_token'] = bin2hex(random_bytes(32));
 }
+
 $csrfToken = (string) $_SESSION['pildiraam_token'];
 session_write_close();
 
@@ -35,73 +41,14 @@ function respond(int $status, bool $ok, string $message, array $extra = []): nev
     exit;
 }
 
-function findPhoto(string $photoDir, mixed $name, array $extensions): ?string
-{
-    if (!is_string($name) || $name === '' || $name !== basename($name)
-        || str_contains($name, '/') || str_contains($name, '\\') || str_contains($name, "\0")) {
-        return null;
-    }
-
-    if (!in_array(strtolower(pathinfo($name, PATHINFO_EXTENSION)), $extensions, true)) {
-        return null;
-    }
-
-    $base = realpath($photoDir);
-    $candidate = $photoDir . '/' . $name;
-    $path = realpath($candidate);
-
-    // Sümbollinke ei luba, ka siis mitte, kui need osutavad samasse kausta.
-    if (!$base || !$path || is_link($candidate) || !is_file($path)
-        || !str_starts_with($path, $base . DIRECTORY_SEPARATOR)) {
-        return null;
-    }
-
-    return $path;
-}
-
-function photoList(string $photoDir, array $extensions): array
-{
-    if (!is_dir($photoDir) || !is_readable($photoDir)) {
-        return [];
-    }
-
-    $photos = [];
-    foreach (scandir($photoDir) ?: [] as $name) {
-        $path = findPhoto($photoDir, $name, $extensions);
-        if ($path === null) {
-            continue;
-        }
-        $mtime = (int) (@filemtime($path) ?: 0);
-        $size = (int) (@filesize($path) ?: 0);
-        $photos[] = [
-            'name' => $name,
-            'rev' => $mtime . '-' . $size,
-            'size' => $size,
-            'mtime' => $mtime,
-        ];
-    }
-
-    usort($photos, static fn(array $a, array $b): int =>
-        ($b['mtime'] <=> $a['mtime']) ?: strnatcasecmp($a['name'], $b['name'])
-    );
-    return $photos;
-}
-
-function clearOldPreview(string $cacheDir, string $name, int $mtime, int $size): void
-{
-    // index.php teeb JPEG-vahemälu võtme failinime, muutmisaja ja suuruse järgi.
-    $cache = $cacheDir . '/' . sha1($name . '|' . $mtime . '|' . $size) . '.jpg';
-    if (is_file($cache) && !is_link($cache)) {
-        @unlink($cache);
-    }
-}
-
 function memoryLimitBytes(): int
 {
     $value = trim((string) ini_get('memory_limit'));
+
     if ($value === '' || $value === '-1') {
         return PHP_INT_MAX;
     }
+
     $number = (float) $value;
     $suffix = strtolower(substr($value, -1));
     $multiplier = match ($suffix) {
@@ -110,19 +57,8 @@ function memoryLimitBytes(): int
         'k' => 1024,
         default => 1,
     };
-    return (int) min(PHP_INT_MAX, $number * $multiplier);
-}
 
-function turnImage(GdImage $image, int $degrees): GdImage|false
-{
-    // GD kasutab vastupäeva nurka; sama kokkulepe on siin funktsioonis.
-    $background = imagecolorallocatealpha($image, 0, 0, 0, 127);
-    $turned = imagerotate($image, $degrees, $background);
-    if ($turned !== false) {
-        imagealphablending($turned, false);
-        imagesavealpha($turned, true);
-    }
-    return $turned;
+    return (int) min(PHP_INT_MAX, $number * $multiplier);
 }
 
 function rotatePhoto(string $path, string $direction, string $photoDir): ?string
@@ -137,8 +73,10 @@ function rotatePhoto(string $path, string $direction, string $photoDir): ?string
     }
 
     $pixels = (int) $info[0] * (int) $info[1];
+
     // Täissuuruses pööramine vajab korraga mälu kahele pildile.
     $estimate = $pixels * 11 + 32 * 1024 * 1024;
+
     if ($pixels > 32000000 || $estimate > memoryLimitBytes() - memory_get_usage(true)) {
         return 'Pilt on selles seadmes täissuuruses pööramiseks liiga suur. Pööra see arvutis väiksemaks.';
     }
@@ -150,6 +88,7 @@ function rotatePhoto(string $path, string $direction, string $photoDir): ?string
         'webp' => 'imagecreatefromwebp',
         default => null,
     };
+
     if ($reader === null || !function_exists($reader)) {
         return 'Seda pildivormingut ei saa siin pöörata.';
     }
@@ -164,35 +103,26 @@ function rotatePhoto(string $path, string $direction, string $photoDir): ?string
 
     // Kõigepealt arvestame telefoni EXIF-pööramisinfot. GD kirjutatud uuel
     // failil seda infot enam pole, seega ei pöörata pilti järgmine kord topelt.
-    $orientation = 1;
-    if (in_array($extension, ['jpg', 'jpeg'], true) && function_exists('exif_read_data')) {
-        $exif = @exif_read_data($path);
-        $orientation = (int) ($exif['Orientation'] ?? 1);
+    $orientation = exifOrientation($path, $extension);
+
+    $flip = orientationFlip($orientation);
+    if ($flip !== null) {
+        imageflip($source, $flip);
     }
 
-    if (in_array($orientation, [2, 4, 5, 7], true)) {
-        imageflip($source, $orientation === 4 ? IMG_FLIP_VERTICAL : IMG_FLIP_HORIZONTAL);
-    }
-
-    $autoAngle = match ($orientation) {
-        3 => 180,
-        5, 8 => 90,
-        6, 7 => 270,
-        default => 0,
-    };
+    $autoAngle = orientationAngle($orientation);
     if ($autoAngle !== 0) {
         $corrected = turnImage($source, $autoAngle);
         if (!$corrected) {
-            imagedestroy($source);
             return 'Pildi asendi parandamine ebaõnnestus.';
         }
-        imagedestroy($source);
         $source = $corrected;
     }
 
     $angle = $direction === 'right' ? 270 : 90;
     $rotated = turnImage($source, $angle);
-    imagedestroy($source);
+    unset($source);
+
     if (!$rotated) {
         return 'Pööramine ebaõnnestus.';
     }
@@ -201,7 +131,6 @@ function rotatePhoto(string $path, string $direction, string $photoDir): ?string
     // salvestamise järel. Failinimi ja vorming jäävad samaks.
     $temp = tempnam($photoDir, '.pildiraam-turn-');
     if ($temp === false) {
-        imagedestroy($rotated);
         return 'Ajutist faili ei saanud luua. Kontrolli kausta õigusi.';
     }
 
@@ -211,7 +140,7 @@ function rotatePhoto(string $path, string $direction, string $photoDir): ?string
         'webp' => function_exists('imagewebp') && imagewebp($rotated, $temp, 90),
         default => false,
     };
-    imagedestroy($rotated);
+    unset($rotated);
 
     if (!$saved || !is_file($temp) || (int) @filesize($temp) < 1) {
         @unlink($temp);
@@ -220,40 +149,66 @@ function rotatePhoto(string $path, string $direction, string $photoDir): ?string
 
     @chmod($temp, 0644);
     $previousTime = (int) (@filemtime($path) ?: time());
+
     if (!@rename($temp, $path)) {
         @unlink($temp);
         return 'Originaalfaili ei õnnestunud asendada. Kontrolli kausta õigusi.';
     }
+
     // Vahemälu võti peab muutuma ka kahe kiire järjestikuse pööramise järel.
     @touch($path, max(time(), $previousTime + 1));
     clearstatcache(true, $path);
+
     return null;
 }
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+
 if ($method === 'GET' && ($_GET['action'] ?? '') === 'list') {
     if (!is_dir($photoDir) || !is_readable($photoDir)) {
         respond(500, false, 'Fotokausta ei saa lugeda.');
     }
-    respond(200, true, 'OK', ['photos' => photoList($photoDir, $extensions)]);
+
+    // Koristame maha katkenud pööramiste ajutised failid ja vanad eelvaated.
+    cleanupTurnTemps($photoDir);
+
+    $photos = photoList($photoDir, $extensions, 'newest');
+    pruneCache($cacheDir, $photos);
+
+    respond(200, true, 'OK', ['photos' => $photos]);
 }
 
 if ($method === 'POST') {
+    // Kui päring ületab post_max_size, jätab PHP $_POST ja $_FILES tühjaks.
+    // Kontrollime seda enne CSRF-i, et kasutaja näeks õiget põhjust.
+    if ($_POST === [] && $_FILES === [] && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+        respond(
+            413,
+            false,
+            'Fail on liiga suur: see ületab PHP post_max_size piiri ('
+            . (string) ini_get('post_max_size') . ').'
+        );
+    }
+
     $token = $_POST['csrf'] ?? '';
     if (!is_string($token) || !hash_equals($csrfToken, $token)) {
         respond(403, false, 'Sessioon aegus. Värskenda lehte ja proovi uuesti.');
     }
+
     if (!is_dir($photoDir) || !is_writable($photoDir)) {
         respond(500, false, 'Fotokaust puudub või Apachel pole sinna kirjutamisõigust.');
     }
 
     $action = $_POST['action'] ?? 'upload';
+
     if ($action === 'delete' || $action === 'rotate') {
         $name = $_POST['name'] ?? null;
         $path = findPhoto($photoDir, $name, $extensions);
+
         if ($path === null) {
             respond(404, false, 'Fotot ei leitud. Värskenda nimekirja.');
         }
+
         $mtime = (int) (@filemtime($path) ?: 0);
         $size = (int) (@filesize($path) ?: 0);
 
@@ -261,7 +216,8 @@ if ($method === 'POST') {
             if (!@unlink($path)) {
                 respond(500, false, 'Fotot ei saanud kustutada. Kontrolli kausta õigusi.');
             }
-            clearOldPreview($cacheDir, (string) $name, $mtime, $size);
+
+            clearPreviews($cacheDir, (string) $name, $mtime, $size);
             respond(200, true, 'Foto kustutatud.');
         }
 
@@ -269,11 +225,13 @@ if ($method === 'POST') {
         if (!in_array($direction, ['left', 'right'], true)) {
             respond(400, false, 'Tundmatu pööramise suund.');
         }
+
         $error = rotatePhoto($path, $direction, $photoDir);
         if ($error !== null) {
             respond(422, false, $error);
         }
-        clearOldPreview($cacheDir, (string) $name, $mtime, $size);
+
+        clearPreviews($cacheDir, (string) $name, $mtime, $size);
         respond(200, true, 'Foto pööratud ja salvestatud.');
     }
 
@@ -281,11 +239,13 @@ if ($method === 'POST') {
         respond(400, false, 'Tundmatu tegevus.');
     }
 
-    // Senine üleslaadimise loogika: üks fail päringu kohta, kuni 64 MiB.
+    // Üks fail päringu kohta, kuni 64 MiB.
     $f = $_FILES['foto'] ?? null;
+
     if (!is_array($f) || !is_int($f['error'] ?? null)) {
-        respond(400, false, 'Fail puudub. Võimalik, et PHP post_max_size on liiga väike.');
+        respond(400, false, 'Fail puudub.');
     }
+
     if ($f['error'] !== UPLOAD_ERR_OK) {
         $errors = [
             UPLOAD_ERR_INI_SIZE => 'Fail ületab PHP upload_max_filesize piiri.',
@@ -298,14 +258,18 @@ if ($method === 'POST') {
         ];
         respond(400, false, $errors[$f['error']] ?? 'Üleslaadimine ebaõnnestus.');
     }
+
     $tmp = (string) ($f['tmp_name'] ?? '');
     $size = (int) ($f['size'] ?? 0);
+
     if ($size < 1 || $size > 64 * 1024 * 1024 || !is_uploaded_file($tmp)) {
         respond(400, false, 'Vigane või liiga suur fail (max 64 MiB).');
     }
+
     if (!function_exists('finfo_open')) {
         respond(500, false, 'PHP Fileinfo moodul puudub.');
     }
+
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $mime = $finfo->file($tmp);
     $types = [
@@ -313,10 +277,13 @@ if ($method === 'POST') {
         'image/png' => 'png',
         'image/webp' => 'webp',
     ];
+
     if (!is_string($mime) || !isset($types[$mime])) {
         respond(415, false, 'Toetatud on ainult JPG, PNG ja WebP pildid.');
     }
+
     $dimensions = @getimagesize($tmp);
+
     if (!$dimensions || ($dimensions['mime'] ?? '') !== $mime
         || (int) $dimensions[0] < 1 || (int) $dimensions[1] < 1
         || (int) $dimensions[0] * (int) $dimensions[1] > 20000000) {
@@ -330,9 +297,11 @@ if ($method === 'POST') {
     $filename = date('Ymd_His') . '_' . bin2hex(random_bytes(8)) . '_'
         . $stem . '.' . $types[$mime];
     $destination = $photoDir . '/' . $filename;
+
     if (!move_uploaded_file($tmp, $destination)) {
         respond(500, false, 'Pildi salvestamine ebaõnnestus. Kontrolli kausta õigusi.');
     }
+
     @chmod($destination, 0644);
     respond(201, true, 'Salvestatud: ' . $filename);
 }
@@ -342,6 +311,7 @@ if ($method !== 'GET') {
     http_response_code(405);
     exit;
 }
+
 header('Cache-Control: no-store');
 header('X-Content-Type-Options: nosniff');
 ?>
@@ -440,8 +410,9 @@ a { color: #a9ceff; }
     <p class="muted" style="font-size:.85rem">Pööramine muudab originaalfaili ja võib eemaldada selle metaandmed. Kustutamist tagasi võtta ei saa.</p>
   </section>
 
-  <footer><a href="./">Ava slaidiesitlus</a> · Sellel halduslehel ei ole parooli; kasuta seda ainult usaldusväärses koduvõrgus.</footer>
+  <footer><a href="./">Ava slaidiesitlus</a> · Sellel halduslehel ei ole vaikimisi parooli; kasuta seda ainult usaldusväärses koduvõrgus või kaitse see parooliga (vt README).</footer>
 </main>
+
 <script>
 (() => {
   'use strict';
@@ -452,7 +423,7 @@ a { color: #a9ceff; }
   const bar = document.getElementById('bar');
   const stats = document.getElementById('stats');
   const current = document.getElementById('current');
-  const history = document.getElementById('history');
+  const historyList = document.getElementById('history');
   const pauseButton = document.getElementById('pause');
   const gallery = document.getElementById('gallery');
   const galleryStatus = document.getElementById('gallery-status');
@@ -478,8 +449,8 @@ a { color: #a9ceff; }
     const li = document.createElement('li');
     li.className = good ? 'ok' : 'err';
     li.textContent = (good ? '✓ ' : '✕ ') + message;
-    history.prepend(li);
-    while (history.children.length > 15) history.lastElementChild.remove();
+    historyList.prepend(li);
+    while (historyList.children.length > 15) historyList.lastElementChild.remove();
   }
 
   function addFiles(files) {
@@ -517,6 +488,7 @@ a { color: #a9ceff; }
       };
       xhr.onerror = () => reject(new Error('Võrguühendus katkes'));
       xhr.ontimeout = () => reject(new Error('Üleslaadimine aegus'));
+
       const body = new FormData();
       body.append('csrf', csrf);
       body.append('action', 'upload');
@@ -529,6 +501,7 @@ a { color: #a9ceff; }
     if (active || paused) return;
     active = true;
     update();
+
     while (queue.length && !paused) {
       const file = queue.shift();
       current.textContent = 'Laen üles: ' + file.name;
@@ -542,35 +515,40 @@ a { color: #a9ceff; }
       }
       update();
     }
+
     active = false;
     current.textContent = paused ? 'Järjekord peatatud' : 'Valmis! Fotod ilmuvad peagi slaidiesitlusse.';
     update();
     await loadPhotos();
   }
 
-  // Pisipildid saadakse olemasolevast index.php-st; see kasutab oma vahemälu.
+  // Pisipildid saadakse index.php-st (&size=thumb). Neid tehakse ükshaaval ja hoitakse vahemälus.
   function drawGallery() {
     const query = search.value.trim().toLocaleLowerCase('et');
     const visible = photos.filter(photo => photo.name.toLocaleLowerCase('et').includes(query));
     count.textContent = `${photos.length} fotot`;
     gallery.replaceChildren();
+
     if (!visible.length) {
       galleryStatus.textContent = photos.length ? 'Otsingule vastavaid fotosid ei ole.' : 'Ühtegi fotot veel ei ole.';
       return;
     }
+
     if (!busyName) galleryStatus.textContent = `Näitan ${visible.length} fotot.`;
 
     const fragment = document.createDocumentFragment();
+
     for (const photo of visible) {
       const card = document.createElement('article');
       card.className = 'photo-card';
+
       const preview = document.createElement('div');
       preview.className = 'photo-preview';
       const img = document.createElement('img');
       img.loading = 'lazy';
       img.decoding = 'async';
       img.alt = 'Foto eelvaade';
-      img.src = './?photo=' + encodeURIComponent(photo.name) + '&v=' + encodeURIComponent(photo.rev);
+      img.src = './?photo=' + encodeURIComponent(photo.name) + '&size=thumb&v=' + encodeURIComponent(photo.rev);
       img.onerror = () => { preview.replaceChildren(document.createTextNode('Eelvaade puudub')); };
       preview.append(img);
 
@@ -592,6 +570,7 @@ a { color: #a9ceff; }
         ['↷ Paremale', 'right'],
         ['Kustuta', 'delete'],
       ];
+
       for (const [label, action] of controls) {
         const button = document.createElement('button');
         button.type = 'button';
@@ -602,9 +581,11 @@ a { color: #a9ceff; }
         button.addEventListener('click', () => managePhoto(photo, action));
         actions.append(button);
       }
+
       card.append(preview, info, actions);
       fragment.append(card);
     }
+
     gallery.append(fragment);
   }
 
@@ -615,6 +596,7 @@ a { color: #a9ceff; }
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || `HTTP ${response.status}`);
       photos = data.photos;
+      galleryStatus.className = '';
       drawGallery();
     } catch (error) {
       galleryStatus.className = 'error';
@@ -632,15 +614,18 @@ a { color: #a9ceff; }
     galleryStatus.className = '';
     galleryStatus.textContent = action === 'delete' ? 'Kustutan fotot…' : 'Pööran fotot…';
     drawGallery();
+
     try {
       const body = new FormData();
       body.append('csrf', csrf);
       body.append('action', action === 'delete' ? 'delete' : 'rotate');
       body.append('name', photo.name);
       if (action !== 'delete') body.append('direction', action);
+
       const response = await fetch('upload.php', { method: 'POST', body });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || `HTTP ${response.status}`);
+
       busyName = '';
       await loadPhotos();
       galleryStatus.className = 'success';
@@ -658,6 +643,7 @@ a { color: #a9ceff; }
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); }
   });
   input.addEventListener('change', () => { addFiles(input.files); input.value = ''; });
+
   for (const eventName of ['dragenter', 'dragover']) {
     drop.addEventListener(eventName, event => {
       event.preventDefault();
@@ -671,6 +657,7 @@ a { color: #a9ceff; }
     });
   }
   drop.addEventListener('drop', event => addFiles(event.dataTransfer.files));
+
   pauseButton.addEventListener('click', () => {
     paused = !paused;
     update();
@@ -678,6 +665,7 @@ a { color: #a9ceff; }
   });
   search.addEventListener('input', drawGallery);
   refresh.addEventListener('click', loadPhotos);
+
   update();
   loadPhotos();
 })();
