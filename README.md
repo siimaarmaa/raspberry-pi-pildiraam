@@ -1,85 +1,133 @@
 # Pildiraam Raspberry Pi jaoks
 
-Tegin selle väikese pildiraami ühe vana Raspberry Pi 2 jaoks. Mõte oli lihtne: ekraan võiks näidata kodus pilte ja uusi fotosid saaks telefonist juurde panna, ilma et peaks iga kord Pi-sse sisse logima.
+Väike pildiraam Raspberry Pi jaoks. Ekraan näitab kodus pilte ja uusi fotosid saab telefonist juurde panna, ilma et peaks Pi-sse sisse logima.
 
-See pole mingi suur pildihaldussüsteem. Andmebaasi pole, kontosid ka mitte. Üks leht näitab pilte, teine laseb neid juurde laadida, pöörata ja kustutada.
+See pole suur pildihaldussüsteem. On kaks PHP faili: üks näitab pilte, teine laseb neid juurde laadida. Andmebaasi pole, kontosid ka mitte.
 
-Algne masin, mille peal seda kasutan:
+See juhend viib sind **nullist** valmis pildiraamini. Eeldus on ainult värskelt kirjutatud SD-kaart, mitte midagi eelnevalt paigaldatut.
 
-- Raspberry Pi 2 Model B Rev 1.1
-- Raspberry Pi OS Lite / Raspbian 13 (Trixie)
-- Raspberry Pi Touch Display 2, DSI ühendus (720 × 1280)
-- Apache + PHP, ekraanil Weston ja Cog
+## Testitud keskkond
 
-Muul Linuxi masinal ja tavalises brauseris võib samamoodi töötada. Westoni ja Cogi pole vaja, kui tahad pilte lihtsalt arvutis brauserist vaadata.
+- Raspberry Pi 3 Model B Rev 1.2
+- Raspberry Pi OS Lite (Raspbian GNU/Linux 13 "Trixie"), **ilma töölauata**
+- Kernel `6.18.x+rpt-rpi-v7`, arhitektuur `arm` (32-bitine)
+- Apache + PHP 8.4, ekraanil Weston ja Cog
+
+Algselt tegin selle Raspberry Pi 2 jaoks (Touch Display 2, DSI). Pi 3 puhul on lihtsaim ekraan HDMI, aga DSI töötab samamoodi; vahe on ainult `weston.ini` failis (vt samm 8).
+
+Westoni ja Cogi pole vaja, kui tahad pilte lihtsalt arvutis brauserist vaadata. Siis piisab sammudest 1-6.
 
 ## Mida see teeb
 
-**Slaidiesitlus** (`index.php`): pildid võetakse kaustast `/home/saarmaa/pildid`. Slaidid vahelduvad vaikimisi iga 12 sekundi järel sujuva üleminekuga. Ekraanil on kell, kuupäev, piltide loendur ja soovi korral ilm (SVG-ikoonidega, seega ei sõltu need fontidest). Järgmine foto laaditakse taustal ette.
+Pildid võetakse kaustast `~/pildid`. Slaidid vahetuvad iga 12 sekundi järel ja üleminek on sujuv. Ekraanil on ka kell, kuupäev, foto nimi ning piltide arv.
 
-Pildikausta kontrollitakse iga 30 sekundi järel. Uued pildid tulevad automaatselt nimekirja lõppu. Kohe järgmisel sekundil uut pilti muidugi ei näe, sest slaidiesitlus käib oma järjekorras edasi. Viimati näidatud foto jäetakse brauseris meelde, nii et lehe uuesti laadimine ei alusta esitlust otsast.
+Pildikausta kontrollitakse iga 30 sekundi järel. Uued pildid tulevad automaatselt nimekirja, kuid slaidiesitlus käib oma järjekorras edasi, nii et uut pilti ei näe kohe.
 
-**Haldusleht** (`upload.php`): fotode lisamine (mitu korraga), pööramine 90° vasakule või paremale, kustutamine ja otsing failinime järgi. Sama nimega pilte üle ei kirjutata, üles laaditud failid saavad endale uue nime.
-
-Toetatud on JPG, PNG ja WebP. Suuri pilte vähendatakse enne ekraanile saatmist (slaid 1280 px, haldusleht 400 px pisipilt) ning väiksem koopia hoitakse vahemälus. Pisipildid ja slaidid töötleb korraga ainult üks päring, et Pi 2 mälu ei saaks täis. Originaalfaili muudab ainult pööramine. Ühe üleslaaditava faili piir on 64 MiB ja foto tohib olla kuni 20 megapikslit. Pi 2 on vana masin, nii et väga suurte piltide hunnikuga tasub natuke arvestada.
-
-Vahemälu koristab ennast ise: eelvaated, mille fotot enam pole, kustutatakse korra tunnis.
+Toetatud on JPG, PNG ja WebP. Suuri pilte vähendatakse enne ekraanile saatmist ning väiksem koopia hoitakse vahemälus. Originaalfaili ei muudeta. Ühe üleslaaditava faili piir on 64 MiB ja foto tohib olla kuni 20 megapikslit. Pi 3 mälu on 1 GB, seega väga suure piltide hunniku esmakordne töötlemine võtab aega.
 
 ## Failid
 
 ```
-pildiraam/
-├── common.php    # seadistus ja ühised abifunktsioonid
+raspberry-pi-pildiraam/
 ├── index.php     # slaidiesitlus ja piltide töötlemine
-├── upload.php    # fotode lisamine, pööramine ja kustutamine
-├── README.md     # seesama juhend
-└── WESTON-COG.md # Weston ja Cog: Pi ekraanile täisekraanil
+├── upload.php    # fotode lisamine telefonist või arvutist
+└── README.md     # see juhend
 ```
 
-CSS ja JavaScript on PHP failide sees. Rohkem faile projektil vaja pole.
+CSS ja JavaScript on PHP failide sees.
 
 ## Paigaldamine
 
-Eeldan, et Apache ja PHP on sul juba olemas ning Apache päriselt käivitab PHP-d. Näited on kirjutatud kasutajale `saarmaa`. Kui sul on teine kasutajanimi, vaheta see ka käskudes ära ja muuda `common.php` algusest `photoDir`.
+Kõik käsud käivad tavakasutajana (mitte `root`), `sudo` on seal, kus vaja. Käsud kasutavad muutujaid `$USER` ja `$HOME`, nii et kasutajanimi võib olla mis tahes.
 
-Kõigepealt vajalikud lisad:
+### 1. SD-kaardi ettevalmistamine
+
+1. Ava [Raspberry Pi Imager](https://www.raspberrypi.com/software/).
+2. Vali seade **Raspberry Pi 3**, süsteemiks **Raspberry Pi OS (other) → Raspberry Pi OS Lite** (Trixie). 32-bitine versioon sobib hästi.
+3. Enne kirjutamist ava seaded ja määra: hostinimi (nt `pildiraam`), kasutajanimi ja parool, Wi-Fi andmed (kui ei kasuta kaablit), ajavöönd ning **SSH sisse**.
+4. Kirjuta kaart, pane Pi-sse ja lülita sisse. Esimene käivitus võtab minuti-paar.
+
+Ühenda arvutist:
+
+```
+ssh KASUTAJA@pildiraam.local
+```
+
+### 2. Süsteemi uuendamine ja ajavöönd
 
 ```
 sudo apt update
-sudo apt install -y php-gd acl curl
+sudo apt full-upgrade -y
+sudo timedatectl set-timezone Europe/Tallinn
+sudo reboot
 ```
+
+Ajavöönd on vajalik, et ekraani kell näitaks õiget aega. Pärast taaskäivitust logi uuesti sisse.
+
+### 3. Vajalike pakettide paigaldus
+
+Veebiserver, PHP ja pildikäsitlus:
+
+```
+sudo apt install -y git apache2 php libapache2-mod-php php-gd acl curl fonts-dejavu-core
+```
+
+Kontrolli, et GD on olemas:
+
+```
+php -v
+php -m | grep -i gd
+```
+
+### 4. Projekti allalaadimine
+
+```
+cd ~
+git clone https://github.com/siimaarmaa/raspberry-pi-pildiraam.git
+cd raspberry-pi-pildiraam
+```
+
+PHP failid on algselt kirjutatud kasutajale `saarmaa`. Vaheta piltide kaust oma kasutaja kausta vastu **mõlemas failis** ja kontrolli tulemust:
+
+```
+sed -i "s#/home/saarmaa/pildid#$HOME/pildid#g" index.php upload.php
+grep -n 'photoDir' index.php upload.php
+```
+
+`grep` peaks näitama sinu kodukausta, mitte `/home/saarmaa`. Kui rida on teistsuguse kujuga, muuda `$photoDir` käsitsi.
+
+### 5. Kaustad ja õigused
 
 Tee piltide kaust, veebikaust ja vahemälu:
 
 ```
-mkdir -p /home/saarmaa/pildid
+mkdir -p "$HOME/pildid"
 sudo mkdir -p /var/www/html/pildiraam
 sudo install -d -o www-data -g www-data -m 0750 /var/cache/pildiraam
 ```
 
-Apache töötab tavaliselt kasutajana `www-data`. Talle on vaja anda õigus piltide kausta lugeda ja sinna uusi fotosid kirjutada. Tervet kodukausta pole vaja kõigile avatuks teha.
+Apache töötab kasutajana `www-data`. Talle tuleb anda õigus piltide kausta lugeda ja sinna uusi fotosid kirjutada. Tervet kodukausta pole vaja kõigile avatuks teha.
 
 ```
-sudo setfacl -m u:www-data:--x /home/saarmaa
-sudo setfacl -R -m u:www-data:rX /home/saarmaa/pildid
-sudo setfacl -m u:www-data:rwx /home/saarmaa/pildid
-sudo setfacl -d -m u:www-data:rwX /home/saarmaa/pildid
+sudo setfacl -m u:www-data:--x "$HOME"
+sudo setfacl -R -m u:www-data:rX "$HOME/pildid"
+sudo setfacl -m u:www-data:rwx "$HOME/pildid"
+sudo setfacl -d -m u:www-data:rwX "$HOME/pildid"
 ```
 
-Seejärel mine kausta, kus sul on PHP failid, ja kopeeri need Apache alla:
+Kontrolli ja kopeeri failid Apache alla:
 
 ```
-php -l common.php
 php -l index.php
 php -l upload.php
-sudo install -m 0644 common.php index.php upload.php /var/www/html/pildiraam/
+sudo install -m 0644 index.php upload.php /var/www/html/pildiraam/
 ```
 
-Kui vanad failid on juba olemas, tee neist enne igaks juhuks varukoopia. See käsk kirjutab need üle. Uuel versioonil on kolm faili, nii et ära unusta `common.php`.
+Kui vanad `index.php` ja `upload.php` on juba olemas, tee neist enne varukoopia. See käsk kirjutab need üle.
 
-### Suuremate fotode üleslaadimine
+### 6. Suuremate fotode üleslaadimine
 
-PHP vaikimisi üleslaadimise piir võib olla liiga väike. Allolev näide lubab kuni 64 MiB suuruse foto korraga. Kui valid telefonis näiteks 200 pilti, saadetakse need serverisse ükshaaval, mitte ühe suure päringuna.
+PHP vaikimisi üleslaadimise piir on liiga väike. Allolev seadistus lubab kuni 64 MiB foto korraga. Kui valid telefonis näiteks 200 pilti, saadetakse need serverisse ükshaaval, mitte ühe suure päringuna.
 
 ```
 for dir in /etc/php/*/apache2/conf.d /etc/php/*/fpm/conf.d; do
@@ -94,16 +142,11 @@ for dir in /etc/php/*/apache2/conf.d /etc/php/*/fpm/conf.d; do
 done
 
 sudo systemctl restart apache2
-sudo systemctl try-restart php8.4-fpm 2>/dev/null || true
 ```
 
-Viimane käsk on PHP 8.4 FPM-i jaoks, kui seda kasutad. Kui FPM-i pole, ei ole sellest midagi. Eri PHP-versiooniga tuleb teenuse nimi vajadusel ära muuta.
+### Kas PHP töötab?
 
-Kui fail on PHP piirist suurem, näed haldulehel nüüd selget teadet "ületab PHP post_max_size piiri".
-
-## Kas PHP töötab?
-
-Seda tasub enne pildiraami avamist proovida. Mul oli vahepeal selline jama, et brauser näitas päris PHP-koodi lehel tekstina.
+Proovi seda enne edasiminekut:
 
 ```
 printf '%s\n' '<?php echo "PHP_OK"; ?>' | sudo tee /var/www/html/pildiraam/php-test.php >/dev/null
@@ -111,16 +154,151 @@ curl -s http://127.0.0.1/pildiraam/php-test.php
 sudo rm /var/www/html/pildiraam/php-test.php
 ```
 
-Vastus peab olema `PHP_OK`. Kui näed `<?php` teksti, pole PHP Apachega korralikult ühendatud. See tuleb enne korda teha, muidu näitab brauser lähtekoodi. Ära tee sellist serverit internetist kättesaadavaks.
+Vastus peab olema `PHP_OK`. Kui näed `<?php` teksti, pole PHP Apachega korralikult ühendatud. See tuleb enne korda teha. Ära tee sellist serverit internetist kättesaadavaks.
 
-Võid ka otse pildiraami proovida:
+Proovi ka pildiraami ennast:
 
 ```
 curl -s http://127.0.0.1/pildiraam/ | head -c 100
 curl -s 'http://127.0.0.1/pildiraam/?list=1'
 ```
 
-Esimene peaks algama `<!doctype html>`-ga. Teine annab JSON-kujul fotode nimekirja. Kui kaust on tühi, on tühi nimekiri täiesti normaalne.
+Esimene peaks algama `<!doctype html>`-ga. Teine annab JSON-kujul fotode nimekirja. Tühi kaust annab tühja nimekirja, see on normaalne.
+
+Siin on pildiraam juba brauserist kasutatav (vt "Kuidas pilte lisada"). Kui tahad, et Pi enda ekraanil hakkaks see ise käima, jätka sammudega 7-9.
+
+### 7. Ekraani tarkvara (Weston ja Cog)
+
+Töölauda ei paigalda. Weston on minimaalne Waylandi kuvaserver ja Cog kerge brauser, mis näitab ühte lehte täisekraanil.
+
+```
+sudo apt install -y weston cog
+```
+
+Kontrolli, et Pi graafikadraiver on sees. Failis `/boot/firmware/config.txt` peab olema rida:
+
+```
+dtoverlay=vc4-kms-v3d
+```
+
+Raspberry Pi OS paneb selle vaikimisi, nii et tavaliselt pole midagi vaja teha. Kontrolli:
+
+```
+grep -n vc4-kms /boot/firmware/config.txt
+```
+
+Veendu, et su kasutaja on vajalikes gruppides (vaikimisi on):
+
+```
+groups
+```
+
+Nimekirjas peaksid olema `video`, `render` ja `input`. Kui mõni puudub:
+
+```
+sudo usermod -aG video,render,input "$USER"
+```
+
+### 8. Kioski seadistus
+
+Selgita välja, mis nime all su ekraan on:
+
+```
+cat /sys/class/drm/*/status
+ls /sys/class/drm/
+```
+
+Ühendatud ekraani juures on `connected`. Tüüpilised nimed on `HDMI-A-1` (HDMI) ja `DSI-1` (Touch Display 2).
+
+Loo brauseri käivitusskript:
+
+```
+sudo tee /usr/local/bin/kiosk-browser >/dev/null <<'EOF'
+#!/bin/sh
+URL_FILE="$HOME/.config/kiosk-url"
+URL="$(cat "$URL_FILE" 2>/dev/null)"
+[ -n "$URL" ] || URL="http://127.0.0.1/pildiraam/"
+exec cog --platform=wl "$URL"
+EOF
+sudo chmod 755 /usr/local/bin/kiosk-browser
+```
+
+Pane aadress faili (hiljem saad seda siit muuta):
+
+```
+mkdir -p ~/.config
+echo 'http://127.0.0.1/pildiraam/' > ~/.config/kiosk-url
+```
+
+Loo Westoni seadistus.
+
+**HDMI ekraan (Pi 3 tavaline valik):**
+
+```
+cat > ~/.config/weston.ini <<'EOF'
+[core]
+backend=drm
+shell=kiosk-shell.so
+idle-time=0
+require-input=false
+
+[autolaunch]
+path=/usr/local/bin/kiosk-browser
+watch=false
+EOF
+```
+
+**Raspberry Pi Touch Display 2 (DSI, 720 × 1280):** lisa kindlasti `[output]` plokk:
+
+```
+cat > ~/.config/weston.ini <<'EOF'
+[core]
+backend=drm
+shell=kiosk-shell.so
+idle-time=0
+require-input=false
+
+[output]
+name=DSI-1
+transform=normal
+
+[autolaunch]
+path=/usr/local/bin/kiosk-browser
+watch=false
+EOF
+```
+
+Kui ekraan on teistpidi paigaldatud, muuda `transform` väärtust (`rotate-90`, `rotate-180`, `rotate-270`). Touch Display 2 paneel on ise juba püstine.
+
+### 9. Automaatne käivitus ilma töölauata
+
+Pi peab käivitama ise ekraani, ilma et keegi sisse logiks. Selleks lülita sisse konsooli automaatne sisselogimine ja käivita Weston `tty1` peal.
+
+```
+sudo raspi-config nonint do_boot_behaviour B2
+```
+
+Lisa kasutaja `~/.profile` faili lõppu:
+
+```
+cat >> ~/.profile <<'EOF'
+
+# Käivita pildiraami ekraan automaatselt esimesel konsoolil
+if [ -z "$WAYLAND_DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+    exec weston --log="$HOME/weston.log"
+fi
+EOF
+```
+
+SSH kaudu sisselogimisel see ei käivitu, sest kontrollitakse `tty1`.
+
+Taaskäivita:
+
+```
+sudo reboot
+```
+
+Mõne hetke pärast peaks ekraanile ilmuma pildiraam.
 
 ## Kuidas pilte lisada
 
@@ -133,35 +311,56 @@ hostname -I
 Oletame, et see on `192.168.1.100`. Siis on aadressid sellised:
 
 - Pildiraam: `http://192.168.1.100/pildiraam/`
-- Fotode haldus: `http://192.168.1.100/pildiraam/upload.php`
+- Fotode lisamine: `http://192.168.1.100/pildiraam/upload.php`
 - Pi enda ekraanil: `http://127.0.0.1/pildiraam/`
 
-Ava telefonis haldusleht, vali fotod ja lase neil ära laadida. Võid valida suure hulga fotosid korraga. Lehel näed, palju on valmis ja kas mõni fail läks veaga. Telefon peab saama Raspberry Pi-ga samas võrgus ühendust; hoia lehte üleslaadimise ajal lahti.
+Ava telefonis üleslaadimise aadress, vali fotod ja lase neil ära laadida. Võid valida suure hulga fotosid korraga. Lehel näed, palju on valmis ja kas mõni fail läks veaga. Telefon peab olema Raspberry Pi-ga samas võrgus ning leht peab üleslaadimise ajal lahti olema.
 
-## Pi ekraanil automaatselt käima
+Sama nimega pilte üle ei kirjutata, üles laaditud failid saavad endale uue nime.
 
-Kui tahad, et pildiraam käivituks Pi enda ekraanil täisekraanil iga alglaadimisega, vaata juhendit [WESTON-COG.md](WESTON-COG.md). Seal on Westoni ja Cogi paigaldus, seadistus, kioskiskript ja tõrkeotsing.
+Pilte võid lisada ka otse arvutist, näiteks:
 
-Kui kiosk töötab, siis uusi pilte lisades enam Pi-d rebootima ei pea. Ka PHP failide muudatusi märkab brauser ligikaudu 30 sekundi jooksul. Lisaks värskendatakse leht igaks juhuks iga kuue tunni järel.
+```
+scp *.jpg KASUTAJA@pildiraam.local:pildid/
+```
+
+Kui kopeerid failid käsitsi, kontrolli, et `www-data` saaks neid lugeda: `sudo setfacl -R -m u:www-data:rX ~/pildid`.
 
 ## Kui tahad midagi muuta
 
-Kogu seadistus on failis `common.php`, funktsioonis `pildiraamConfig()`:
+**Kioski aadress.** Muuda faili `~/.config/kiosk-url` ja taaskäivita (`sudo reboot`).
 
-- `photoDir` ja `cacheDir`: fotode ja vahemälu kaust. Võid kasutada ka keskkonnamuutujaid `PILDIRAAM_PILDID` ja `PILDIRAAM_CACHE`.
-- `slideSeconds`: kui mitu sekundit ühte fotot näidatakse. Edenemisriba kohandub ise, CSS-i muutma ei pea.
-- `weather`: ilma koht, koordinaadid ja `enabled`. Pane `'enabled' => false`, kui ilma pole vaja.
+**Slaidi kestus.** `index.php` sees on rida:
 
-**Ilm teeb välise päringu.** Kui ilm on sees, küsib brauser andmeid aadressilt `api.open-meteo.com`. Seal näeb teenus sinu IP-d ja koordinaate. Koordinaatidele sobib hästi linna või küla keskpunkt, täpset kodu asukohta pole vaja. Fotode näitamine ilmast ei sõltu.
+```
+const delay = 12000;
+```
+
+See tähendab, et ühte pilti näidatakse 12 sekundit. Kui muudad selle näiteks `20000` peale, muuda samas failis CSS-i `animation: fill 12s` samuti `20s` peale, muidu edenemisriba ja slaidide aeg ei klapi.
+
+**Fotode kontrolli intervall.** JavaScriptis `setInterval(reload, 30000)`.
+
+**Piltide kaust või vahemälu.** `$photoDir` on **mõlemas** PHP-failis, vahemälu kaust `$cacheDir` on `index.php` alguses. Pärast muutmist kopeeri failid uuesti: `sudo install -m 0644 index.php upload.php /var/www/html/pildiraam/`.
+
+Kui kopeerid uue `index.php` Apache alla, märkab ekraan muudatust ligikaudu 30 sekundi jooksul. Lisaks värskendatakse leht iga poole tunni järel.
+
+## Uuendamine
+
+```
+cd ~/raspberry-pi-pildiraam
+git pull
+sed -i "s#/home/saarmaa/pildid#$HOME/pildid#g" index.php upload.php
+sudo install -m 0644 index.php upload.php /var/www/html/pildiraam/
+```
 
 ## Kui midagi ei tööta
 
-**Lehel paistab PHP lähtekood.** Apache ei käivita PHP-d. Kontrolli PHP moodulit või PHP-FPM seadistust.
+**Lehel paistab PHP lähtekood.** Apache ei käivita PHP-d. Kontrolli, et `libapache2-mod-php` on paigaldatud, ja taaskäivita Apache: `sudo systemctl restart apache2`.
 
-**Pildiraam ütleb, et pilte pole.** Kontrolli, kas `/home/saarmaa/pildid` sees on pildid ja kas Apache saab neid lugeda:
+**Pildiraam ütleb, et pilte pole.** Kontrolli, kas `~/pildid` sees on pildid ja kas Apache saab neid lugeda:
 
 ```
-ls -la /home/saarmaa/pildid
+ls -la ~/pildid
 curl -s 'http://127.0.0.1/pildiraam/?list=1'
 ```
 
@@ -170,52 +369,44 @@ curl -s 'http://127.0.0.1/pildiraam/?list=1'
 ```
 php -m | grep -i gd
 ls -ld /var/cache/pildiraam
+sudo tail -n 30 /var/log/apache2/error.log
 ```
 
-**Üleslaadimisel tuleb õiguste viga.** Vaata:
+**Üleslaadimisel tuleb õiguste viga.**
 
 ```
-getfacl /home/saarmaa/pildid
-sudo -u www-data test -w /home/saarmaa/pildid && echo OK
+getfacl ~/pildid
+sudo -u www-data test -w ~/pildid && echo OK
 ```
 
-**Fail on liiga suur.** Kontrolli PHP `upload_max_filesize` ja `post_max_size` väärtusi. Selle pildiraami enda piirid on 64 MiB ühe faili kohta ja kuni 20 MP pildi kohta.
+**Fail on liiga suur.** Kontrolli PHP `upload_max_filesize` ja `post_max_size` väärtusi (samm 6). Pildiraami enda piirid on 64 MiB ühe faili kohta ja kuni 20 MP pildi kohta.
 
-**Ilma kohal on ruudud.** Uues versioonis kasutab ilm SVG-ikoone, nii et ruute enam ei tohiks tulla. Kui näed neid ikka, on vana `index.php` veel ekraanil: kopeeri failid uuesti ja oota 30 sekundit.
+**Pi 3 jääb pilte töödeldes aeglaseks.** Esimesel avamisel tehakse igast pildist vähendatud koopia, see võtab Pi 3 peal aega. Kui kaust on väga suur, anna sellele paar minutit või lisa pilte vähehaaval.
 
-**Weston või Cog ei käivitu.** Siis on probleem tõenäoliselt kioskis, mitte PHP-s. Vaata [WESTON-COG.md](WESTON-COG.md) tõrkeotsingu jaotist.
+**Ekraan jääb mustaks või näitab konsooli.** Weston või Cog ei käivitu. Vaata logisid (SSH kaudu):
+
+```
+pgrep -a weston
+pgrep -a cog
+tail -n 50 ~/weston.log
+```
+
+Levinud põhjused:
+
+- `vc4-kms-v3d` puudub `config.txt` failist (vt samm 7).
+- Kasutaja pole gruppides `video`, `render`, `input`.
+- `[output]` plokis on vale ekraani nimi. Kontrolli `cat /sys/class/drm/*/status`. HDMI puhul võid `[output]` ploki üldse ära jätta.
+- Westonil on probleeme graafikaga. Proovi `[core]` alla lisada `use-pixman=true`.
+- Cogi platvormi nimi on teises versioonis erinev. Vaata `cog --help` ja vaheta `--platform=wl` skriptis `/usr/local/bin/kiosk-browser`.
+
+**Tahan Pi-d tavaliselt kasutada, mitte kioskina.** Lülita automaatne käivitus välja: kustuta `~/.profile` lõpust Westoni plokk ja käivita `sudo raspi-config nonint do_boot_behaviour B1`.
 
 ## Turvalisus
 
-**Haldusleht on vaikimisi ilma paroolita.** See on meelega nii, sest kasutan seda oma koduvõrgus. Aga igaüks, kes sellele lehele võrgust ligi saab, saab fotosid lisada, **pöörata (see kirjutab originaalfaili üle) ja kustutada**. Kustutamist tagasi võtta ei saa. Seega ära suuna ruuterist porti 80 internetti ja ära pane seda avalikku serverisse niisama üles.
+**Üleslaadimise lehel ei ole parooli.** See on meelega nii, sest kasutan seda oma koduvõrgus. Igaüks, kes sellele lehele võrgust ligi saab, saab ka fotosid lisada. Seega ära suuna ruuterist porti 80 internetti ja ära pane seda avalikku serverisse niisama üles.
 
-Fotod ise on väljaspool Apache veebikausta, aga see ei asenda paroolikaitset.
+Fotod ise on väljaspool Apache veebikausta, aga see ei asenda paroolikaitset. Sellest tasub aru saada enne, kui sama lahenduse kuhugi avalikku võrku paned.
 
-### Valikuline: parool haldulehele
+## Litsents
 
-Slaidiesitlus jääb avatuks (Pi ekraan ei pea sisse logima), parool tuleb ainult `upload.php` ette:
-
-```
-sudo apt install -y apache2-utils
-sudo htpasswd -c /etc/apache2/.htpasswd-pildiraam minunimi
-```
-
-Seejärel tee fail `/etc/apache2/conf-available/pildiraam-auth.conf`:
-
-```
-<Location "/pildiraam/upload.php">
-    AuthType Basic
-    AuthName "Pildiraam"
-    AuthUserFile /etc/apache2/.htpasswd-pildiraam
-    Require valid-user
-</Location>
-```
-
-Ja lülita see sisse:
-
-```
-sudo a2enconf pildiraam-auth
-sudo systemctl reload apache2
-```
-
-Pane tähele, et Basic-autentimine saadab parooli HTTP kaudu selgelt. Koduvõrgus on see tavaliselt sobiv, internetis mitte.
+MIT, vt `LICENSE`.
