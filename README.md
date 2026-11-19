@@ -120,7 +120,7 @@ Kontrolli ja kopeeri failid Apache alla:
 ```
 php -l index.php
 php -l upload.php
-sudo install -m 0644 index.php upload.php /var/www/html/pildiraam/
+sudo install -m 0644 common.php index.php upload.php /var/www/html/pildiraam/
 ```
 
 Kui vanad `index.php` ja `upload.php` on juba olemas, tee neist enne varukoopia. See käsk kirjutab need üle.
